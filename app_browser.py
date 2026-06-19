@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import io
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 from PIL import Image
 
-from gui_predict import draw_detections, tighten_box
+from detection_utils import draw_detections, tighten_box
 
 
 DEFAULT_MODEL = Path("runs/detect/runs/rice_detection/weights/best.pt")
@@ -77,7 +77,7 @@ st.markdown(
     }
     [data-testid="stExpander"] summary,
     [data-testid="stExpander"] summary * {
-        color: #000000 !important;
+        color: #ffffff !important;
     }
     [data-testid="stFileUploader"] section {
         background: rgba(15, 23, 42, .7); border: 1px dashed #52647e;
@@ -188,10 +188,28 @@ def run_detection(
     return draw_detections(image, detections), detections
 
 
-def image_bytes(image: Image.Image) -> bytes:
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=95)
-    return buffer.getvalue()
+def save_result_image(
+    image: Image.Image,
+    source_name: str,
+    detections: list[tuple[str, float, tuple[int, int, int, int]]],
+) -> Path:
+    best_class = (
+        max(detections, key=lambda item: item[1])[0]
+        if detections
+        else "Tidak_Terdeteksi"
+    )
+    invalid_characters = '<>:"/\\|?*'
+    class_folder = "".join(
+        "_" if character in invalid_characters else character
+        for character in best_class
+    ).strip() or "Tidak_Terdeteksi"
+
+    output_dir = Path(__file__).resolve().parent / "hasil_prediksi" / class_folder
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"{source_name}_prediksi_{timestamp}.jpg"
+    image.save(output_path, format="JPEG", quality=95)
+    return output_path
 
 
 st.markdown(
@@ -294,13 +312,22 @@ with result_col:
     if "result_image" in st.session_state:
         result_image = st.session_state["result_image"]
         st.image(result_image, use_container_width=True)
-        st.download_button(
+        if st.button(
             "Simpan Gambar Hasil Deteksi",
-            data=image_bytes(result_image),
-            file_name=f"{st.session_state['source_name']}_hasil.jpg",
-            mime="image/jpeg",
+            type="primary",
             use_container_width=True,
-        )
+            key="save_result",
+        ):
+            try:
+                saved_path = save_result_image(
+                    result_image,
+                    st.session_state["source_name"],
+                    st.session_state["detections"],
+                )
+                relative_path = saved_path.relative_to(Path(__file__).resolve().parent)
+                st.success(f"Tersimpan di `{relative_path}`")
+            except OSError as exc:
+                st.error(f"Gagal menyimpan gambar: {exc}")
     else:
         st.info("Klik **Deteksi Sekarang** untuk menampilkan hasil di sini.", icon="🔍")
 
@@ -319,7 +346,6 @@ if "result_image" in st.session_state:
         metric_class, metric_score, metric_count = st.columns(3)
         metric_class.metric("Prediksi utama", best_class)
         metric_score.metric("Confidence tertinggi", f"{best_score:.1%}")
-        metric_count.metric("Jumlah deteksi", len(detections))
 
         detail_col, recap_col = st.columns(2, gap="large")
         with detail_col:
